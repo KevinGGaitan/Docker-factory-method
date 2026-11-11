@@ -1,4 +1,4 @@
-# Taller de Contenedores — Administración de bases de datos
+# Taller de Contenedores y Patrones — Gestión de artículos
 
 ## Integrantes
 
@@ -9,15 +9,17 @@
 
 ## Descripción
 
-Entorno de administración de bases de datos PostgreSQL y MySQL mediante CloudBeaver. Los tres servicios se ejecutan en contenedores Docker conectados a una red privada. Desde el navegador es posible explorar tablas, ejecutar consultas SQL e insertar, consultar y modificar registros. Los volúmenes conservan los datos y la configuración al recrear los contenedores.
+Aplicación Java de consola para registrar y consultar artículos en PostgreSQL o MySQL mediante JDBC. Utiliza una fábrica de adaptadores para seleccionar el motor desde archivos de propiedades y un DAO para separar las operaciones SQL del programa principal. Los motores se ejecutan en Docker y pueden administrarse desde CloudBeaver.
 
 Proyecto académico de Arquitectura de Software, Ingeniería de Sistemas.
 
-## Alcance
+## Estado y alcance implementado
 
-El proyecto integra motores de bases de datos y un cliente web existente. El alcance del taller es configurar, comunicar y verificar estos servicios; no requiere desarrollar un frontend ni una API propios. La tabla `curso` sirve como ejemplo para comprobar las operaciones de almacenamiento y consulta.
+Según lo reportado por el equipo, ya están implementados el entorno de contenedores, las clases Java compartidas, la configuración de conexiones y la tabla `articulos` en ambos motores. El desarrollo debe continuar sobre esta base.
 
-Este README describe la configuración prevista por la guía. No certifica que los servicios ya estén desplegados o que exista código adicional en el repositorio.
+La aplicación permite insertar y listar artículos. En cada ejecución, el programa principal consulta los registros, intenta guardar dos artículos de ejemplo y vuelve a consultar para mostrar la cantidad y el contenido en consola. La implementación compartida no incluye métodos de actualización o eliminación en el DAO.
+
+La revisión de este README se basa en los archivos y scripts proporcionados; no constituye una prueba de ejecución del proyecto.
 
 ## Tecnologías
 
@@ -27,7 +29,10 @@ Este README describe la configuración prevista por la guía. No certifica que l
 | PostgreSQL | 18 | Motor de base de datos relacional |
 | MySQL | 8.4 | Motor de base de datos relacional |
 | CloudBeaver Community | `latest` en la guía | Cliente web y editor SQL |
+| Java / JDK | Según la configuración del proyecto | Aplicación de consola y clases de acceso a datos |
+| JDBC | Controladores de PostgreSQL y MySQL | Conexiones y consultas desde Java |
 | SQL | Dialecto de cada motor | Definición y consulta de datos |
+| Archivos `.properties` | Recursos del classpath | Selección del adaptador y parámetros de conexión |
 | Volúmenes Docker | Administrados por Docker | Persistencia de datos y configuración |
 | Red Docker | `red-fis` | Comunicación interna por nombre |
 
@@ -53,7 +58,9 @@ Los puertos publicados permiten acceder desde el equipo. Si se cambia el puerto 
 - Puertos `5432`, `3306` y `8978` disponibles, o puertos externos alternativos.
 - En Windows con Docker Desktop: backend WSL 2 configurado.
 
-## Ejecución local
+## Despliegue de infraestructura desde cero
+
+El entorno ya está implementado. Si los contenedores existen, usar la sección de operación para iniciarlos; estos comandos quedan como referencia para reproducir la infraestructura en otro equipo.
 
 Los siguientes comandos son de una sola línea y pueden ejecutarse en Bash, PowerShell o CMD. Las credenciales incluidas son ejemplos exclusivos del laboratorio.
 
@@ -115,34 +122,120 @@ Registrar las conexiones:
 
 Para comprobar privilegios administrativos en MySQL se puede crear otra conexión con `root` y la contraseña `Fis2026*My`. La configuración sin SSL corresponde al laboratorio local.
 
-## Datos de ejemplo
+## Modelo de datos implementado
 
-Ejecutar cada bloque en el editor SQL de su conexión correspondiente. Las inserciones son de demostración: repetirlas agrega nuevos registros.
-
-### PostgreSQL
+La tabla `articulos` ya fue añadida en MySQL y PostgreSQL con el mismo script:
 
 ```sql
-CREATE TABLE IF NOT EXISTS curso (
-    id SERIAL PRIMARY KEY,
-    nombre VARCHAR(80)
+CREATE TABLE articulos (
+    idarticulo NUMERIC(6,0) PRIMARY KEY,
+    nombrearticulo VARCHAR(50) NOT NULL,
+    valor NUMERIC(7,2) NOT NULL
 );
-INSERT INTO curso (nombre) VALUES ('Fundamentos de Ingeniería de Software');
-SELECT * FROM curso;
 ```
+
+| Columna | Tipo | Uso |
+| --- | --- | --- |
+| `idarticulo` | `NUMERIC(6,0)` | Identificador único, suministrado por Java; no es autoincremental |
+| `nombrearticulo` | `VARCHAR(50)` | Nombre obligatorio del artículo |
+| `valor` | `NUMERIC(7,2)` | Valor obligatorio con dos decimales |
+
+El script documenta el esquema existente. Ejecutarlo otra vez sobre la misma tabla produce un error de objeto existente. Para un entorno nuevo, aplicarlo en la base configurada para cada motor.
+
+```sql
+SELECT idarticulo, nombrearticulo, valor FROM articulos;
+```
+
+Los motores mantienen datos independientes. Cambiar el adaptador no copia ni sincroniza artículos entre ellos.
+
+## Componentes Java implementados
+
+| Paquete / componente | Responsabilidad |
+| --- | --- |
+| `entidades.articulos` | Modelo con `Long idarticulo`, `String nombrearticulo` y `double valor`; constructores, getters, setters y `toString()` |
+| `dao.DAOarticulos` | `findAllProducts()` lista los artículos y `saveProduct(articulos)` inserta uno mediante `PreparedStatement` |
+| `patronfactorymethod.IntAdaptador` | Contrato `Connection getConnection()` |
+| `implementacion.AdaptadorMysql` | Construye la URL JDBC y abre conexiones a MySQL |
+| `implementacion.AdaptadorPostgresql` | Construye la URL JDBC y abre conexiones a PostgreSQL |
+| `patronfactorymethod.FactoryBaseDatos` | Crea adaptadores por `TiposBD` o por el nombre de clase definido en propiedades |
+| `patronfactorymethod.TiposBD` | Enumeración con `MySQL` y `POstgresql`, respetando los nombres actuales |
+| `utilidades.UtilidadesAcceso` | Carga propiedades mediante el classloader |
+| `patronfactorymethod.PatronFactoryMethod` | Punto de entrada `main`; inserta dos artículos de ejemplo y muestra el listado |
+
+La fábrica centraliza la creación del adaptador y el DAO usa su interfaz común. El proyecto presenta este mecanismo como práctica de Factory Method y lo combina con DAO y adaptadores de conexión.
+
+## Configuración de la aplicación
+
+Los recursos deben estar disponibles en el classpath dentro de `Propiedades/`.
+
+### Selección del motor
+
+Archivo `Propiedades/ConfiguracionFactory.properties`:
+
+```properties
+defaultDBClass=implementacion.AdaptadorPostgresql
+#defaultDBClass=implementacion.AdaptadorMysql
+```
+
+Mantener una sola selección activa. El constructor de `DAOarticulos` obtiene el adaptador por esta configuración; para cambiar el motor, editar la propiedad y volver a ejecutar la aplicación.
 
 ### MySQL
 
-```sql
-USE fis_db;
-CREATE TABLE IF NOT EXISTS curso (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    nombre VARCHAR(80)
-);
-INSERT INTO curso (nombre) VALUES ('Arquitectura de Software');
-SELECT * FROM curso;
+El adaptador busca exactamente `Propiedades/DatosMySQL.properties`:
+
+```properties
+host=localhost
+port=3306
+dbname=patrones
+user=USUARIO_MYSQL
+password=CONTRASENA_MYSQL
 ```
 
-Las bases de datos son independientes: los registros de un motor no se sincronizan automáticamente con el otro.
+El encabezado del material compartido dice `DatosMysql.properties`, pero el código carga `DatosMySQL.properties`. Comprobar el nombre real y unificarlo con la ruta del código, especialmente en sistemas que distinguen mayúsculas.
+
+### PostgreSQL
+
+El adaptador busca exactamente `Propiedades/DatosPOstgresql.properties`:
+
+```properties
+host=localhost
+port=5432
+service=patrones
+user=USUARIO_POSTGRESQL
+password=CONTRASENA_POSTGRESQL
+```
+
+`service` representa el nombre de la base de datos en la URL JDBC. Los valores en mayúsculas son marcadores que deben sustituirse por credenciales válidas.
+
+### Integración con Docker
+
+Los archivos Java compartidos apuntan a la base `patrones`, mientras que el despliegue de referencia del taller crea `fis_db`. Alinear ambos: usar `patrones` si es la base donde ya se creó `articulos`, o configurar `dbname` y `service` con `fis_db` si la tabla está allí. No asumir que las dos bases son equivalentes ni que el cambio de propiedades crea una base o tabla.
+
+También deben coincidir los usuarios y contraseñas con los realmente configurados en cada motor. No sustituir credenciales de un entorno existente basándose solo en los ejemplos del despliegue.
+
+- Java ejecutado en el equipo: `localhost` y el puerto publicado del motor.
+- CloudBeaver dentro de `red-fis`: `pg-fis:5432` y `mysql-fis:3306`.
+- Si en el futuro Java se ejecuta en un contenedor de esa red: usar los nombres internos de los motores.
+
+## Ejecución de la aplicación Java
+
+1. Iniciar los contenedores existentes y comprobar que los motores acepten conexiones.
+2. Abrir el proyecto Java existente en el IDE o utilizar su herramienta de compilación real.
+3. Incluir los controladores JDBC de PostgreSQL y MySQL en las dependencias de compilación y ejecución.
+4. Verificar que los archivos de `Propiedades/` se copien al classpath con sus nombres exactos.
+5. Seleccionar el adaptador y comprobar base, usuario, contraseña, host y puerto.
+6. Confirmar que `articulos` exista en la base seleccionada y que el usuario tenga permisos de lectura e inserción.
+7. Ejecutar `patronfactorymethod.PatronFactoryMethod` como aplicación Java.
+
+El código MySQL compartido referencia `com.mysql.jdbc.Driver`. La dependencia debe ser compatible con esa referencia o debe actualizarse el código junto con el controlador elegido. No se especifican versiones de JDK o de los controladores porque no se proporcionó la configuración de compilación.
+
+No se presupone Maven, Gradle ni un JAR ejecutable: el material compartido contiene clases y propiedades, pero no incluye un descriptor de construcción que permita documentar un comando de compilación exacto.
+
+### Resultado esperado
+
+En una base vacía, el programa intenta insertar `Articulo A1` con valor `120` y `Articulo B2` con valor `130`, y muestra el total y cada artículo. En ejecuciones posteriores calcula los identificadores desde la cantidad de registros existentes.
+
+La generación actual mediante `cantidad + 1` puede producir claves duplicadas si hay huecos en los identificadores o ejecuciones simultáneas. Debe tratarse como una limitación de la implementación, no como garantía de unicidad.
 
 ## Usuarios y persistencia
 
@@ -183,34 +276,44 @@ Repetir `docker run` con los mismos nombres produce un conflicto si los contened
 
 ## Contexto y pautas para desarrollo con IA
 
-### Objetivo de desarrollo
+### Punto de partida
 
-Mantener un entorno académico sencillo, reproducible y documentado para administrar PostgreSQL y MySQL mediante CloudBeaver. Tomar la guía del taller y los archivos reales del repositorio como referencia; este documento no implica que las mejoras sugeridas estén implementadas.
+El equipo ya implementó la infraestructura y el código Java documentado. Continuar el proyecto existente y conservar sus datos. Antes de editar, revisar los archivos reales del repositorio y contrastarlos con las clases compartidas. No reconstruir desde cero ni tratar las clases, el DAO, la fábrica o la tabla `articulos` como funcionalidades pendientes.
 
-### Reglas para continuar el proyecto
+### Reglas de desarrollo
 
-1. Inspeccionar los archivos existentes antes de modificar el proyecto. No asumir que existen `compose.yaml`, scripts, pruebas, backend o frontend.
-2. Conservar los tres servicios, la comunicación interna por nombre y la persistencia mediante volúmenes.
-3. Mantener las versiones PostgreSQL 18 y MySQL 8.4, salvo que se solicite una migración justificada. Respetar la ruta de datos correspondiente a cada versión.
-4. Usar SQL compatible con cada motor: `SERIAL` en el ejemplo de PostgreSQL y `AUTO_INCREMENT` en MySQL. No asumir que todos los scripts son intercambiables.
-5. No agregar frameworks, microservicios, patrones de diseño ni funcionalidades de negocio sin un requisito concreto. El PDF proporcionado define un laboratorio de contenedores.
-6. Si se solicita automatización, se puede incorporar Docker Compose como mejora. Documentar los archivos creados, variables, dependencias y comprobaciones de disponibilidad; no darlo por existente.
-7. En archivos de automatización, usar variables de entorno y un `.env.example` con valores de muestra. Excluir `.env` del control de versiones y no incorporar credenciales reales.
-8. Evitar borrar volúmenes, reinicializar bases o ejecutar operaciones destructivas como parte de una corrección rutinaria. Explicar el impacto antes de proponer un reinicio de datos.
-9. Actualizar el README cuando cambien los puertos, nombres, versiones, rutas, credenciales de ejemplo o forma de ejecución.
-10. Distinguir siempre entre cambios propuestos, cambios implementados y verificaciones efectivamente ejecutadas.
+1. Mantener la separación entre entidad, DAO, adaptadores, fábrica, utilidades y punto de entrada. Centralizar el SQL de artículos en el DAO.
+2. Conservar la selección del motor mediante `defaultDBClass` y la interfaz `IntAdaptador`.
+3. Mantener compatibilidad con PostgreSQL y MySQL. El esquema actual de `articulos` es común a ambos motores y el identificador se asigna desde Java.
+4. Preservar los nombres actuales de clases, paquetes, métodos y recursos; si se corrigen sus convenciones o mayúsculas, actualizar todas sus referencias y documentar el cambio.
+5. Verificar la configuración real de la base `patrones` o `fis_db` antes de modificar conexiones. No cambiar credenciales, bases ni puertos de un entorno existente por asumir que usa los ejemplos del taller.
+6. No agregar frontend, API, frameworks ni funcionalidades sin un requisito concreto. El programa Java actual es de consola y permite insertar y listar; CloudBeaver es el cliente web administrativo.
+7. No asumir que existen Maven, Gradle, Docker Compose o pruebas automatizadas. Revisar el repositorio y usar su mecanismo real de construcción.
+8. Evitar borrar volúmenes, recrear tablas o reinicializar datos como corrección rutinaria. Cualquier evolución del esquema debe preservar los registros existentes.
+9. Mantener consultas parametrizadas. Evitar registrar contraseñas: el adaptador MySQL compartido imprime una URL que contiene credenciales; eliminar o enmascarar esa información al mejorar el código.
+10. Actualizar este documento al cambiar configuración, dependencias, comandos o comportamiento. Separar lo implementado de las mejoras propuestas y de las pruebas realmente ejecutadas.
 
-### Criterios de aceptación
+### Mejoras identificadas, aún no acreditadas como implementadas
 
-- Los tres contenedores permanecen en ejecución y comparten la red prevista.
-- CloudBeaver permite abrir una conexión funcional a cada motor.
-- Se pueden crear y consultar registros en la tabla `curso` en ambos motores.
-- Los datos permanecen después de detener y reiniciar los servicios; también deben conservarse al recrear contenedores reutilizando sus volúmenes.
-- La diferencia entre el usuario administrativo y el usuario de aplicación de MySQL puede verificarse mediante sus permisos.
-- La documentación permite repetir el despliegue desde un entorno limpio.
+- Sustituir `cantidad + 1` por una estrategia de identificadores que evite colisiones, coordinando los cambios entre Java y los dos motores.
+- Usar `try-with-resources` para cerrar conexiones, sentencias y resultados.
+- Tratar explícitamente fallos de conexión y carga de propiedades. Actualmente algunos métodos devuelven `null` y el programa principal asume una lista válida.
+- Comprobar el resultado de `saveProduct()` y comunicar inserciones fallidas.
+- Evaluar `BigDecimal` para representar valores monetarios en lugar de `double`.
+- Actualizar la creación por reflexión y revisar la compatibilidad de los controladores JDBC.
+- Externalizar credenciales reales y excluirlas del control de versiones.
 
-Las validaciones deben ejecutarse cuando Docker esté disponible. Si no lo está, indicar esa limitación y no afirmar que el despliegue fue probado.
+### Validación de cambios
 
-## Referencia
+- Compilar usando la configuración real del proyecto.
+- Ejecutar la aplicación por separado con cada adaptador y verificar inserciones y consultas en `articulos`.
+- Confirmar que el cambio de motor se realiza mediante propiedades y que las bases conservan datos independientes.
+- Verificar persistencia al detener y reiniciar los contenedores.
+- Probar errores relevantes a cada cambio, como conexión no disponible o identificador duplicado.
+- Si no se dispone del proyecto completo o de Docker, indicar esa limitación y no afirmar que la ejecución fue validada.
 
-Guía académica: **Taller Contenedores y Patrones (1).pdf**, sección «Taller Práctico – Contenedores (DOCKER)».
+## Referencias
+
+- Guía académica: **Taller Contenedores y Patrones (1).pdf**.
+- Clases Java y archivos de propiedades compartidos por el equipo en **Markdown pegado(1).md**.
+- Scripts de creación de `articulos` para MySQL y PostgreSQL proporcionados por el equipo.
