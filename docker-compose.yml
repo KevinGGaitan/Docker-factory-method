@@ -1,0 +1,67 @@
+services:
+  mysql-fis:
+    image: mysql:8.4
+    container_name: mysql-fis
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: fis_db
+      MYSQL_USER: app_fis
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_fis_data:/var/lib/mysql
+      - ./Docker-factory-method/init/mysql/01_articulos.sql:/docker-entrypoint-initdb.d/01_articulos.sql:ro
+    networks:
+      red-fis:
+        aliases:
+          - mysql-fis
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  cloudbeaver-fis:
+    image: dbeaver/cloudbeaver:latest
+    container_name: cloudbeaver-fis
+    ports:
+      - "127.0.0.1:8978:8978"
+    volumes:
+      - cb_fis_workspace:/opt/cloudbeaver/workspace
+    networks:
+      - red-fis
+    depends_on:
+      mysql-fis:
+        condition: service_healthy
+
+  app:
+    build: .
+    profiles: ["app"]
+    networks:
+      - red-fis
+    environment:
+      PG_HOST: pg-fis
+      PG_PORT: 5432
+      PG_DATABASE: fis_db
+      PG_USER: ${PG_USER:?Set PG_USER in .env}
+      PG_PASSWORD: ${PG_PASSWORD:?Set PG_PASSWORD in .env}
+      MYSQL_HOST: mysql-fis
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: fis_db
+      MYSQL_USER: app_fis
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      DEFAULT_DB_CLASS: ${DEFAULT_DB_CLASS:-implementacion.AdaptadorPostgresql}
+    depends_on:
+      mysql-fis:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  mysql_fis_data:
+  cb_fis_workspace:
+
+networks:
+  red-fis:
+    external: true
